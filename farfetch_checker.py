@@ -16,12 +16,19 @@ assortment_file = st.file_uploader("Upload Assortment CSV", type=["csv"])
 if assortment_file is not None:
     assortment_df = pd.read_csv(assortment_file)
     
+    # Strip spaces from column names
+    assortment_df.columns = assortment_df.columns.str.strip()
+    
     # Ensure required columns exist
     required_cols = ['SKU', 'Netta product ID', 'Optional product ID']
     for col in required_cols:
         if col not in assortment_df.columns:
             st.error(f"Assortment CSV must contain column: {col}")
             st.stop()
+
+    # Normalize columns to string and strip spaces
+    for col in required_cols:
+        assortment_df[col] = assortment_df[col].astype(str).str.strip()
 
 # --- Upload Stock Point CSVs ---
 st.markdown("Upload 6 stock point CSVs (HK, US, DE, CH, JP, AU).")
@@ -34,6 +41,14 @@ if assortment_file is not None and len(stock_files) > 0:
     for f in stock_files:
         filename = f.name.lower()
         df = pd.read_csv(f)
+        
+        # Strip spaces from column names
+        df.columns = df.columns.str.strip()
+        
+        # Normalize string columns
+        for col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+        
         if 'hk' in filename:
             stock_dfs['HK'] = df
         elif 'us' in filename:
@@ -62,11 +77,15 @@ if assortment_file is not None and len(stock_files) > 0:
         
         # Function to search in a stock dataframe
         def search_stock(stock_df, col, value):
-            if pd.isna(value):
+            if pd.isna(value) or value == '':
+                return None
+            if col not in stock_df.columns:
                 return None
             match = stock_df[stock_df[col] == value]
             if not match.empty:
-                return match['Product ID '].astype(str).tolist()  # Farfetch product ID column
+                # Use the correct Product ID column
+                if 'Product ID' in stock_df.columns:
+                    return match['Product ID'].tolist()
             return None
         
         # Process each row
