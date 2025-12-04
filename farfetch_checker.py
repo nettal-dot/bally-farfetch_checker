@@ -5,36 +5,34 @@ st.set_page_config(page_title="Farfetch Stock Checker", layout="wide")
 st.title("Farfetch Stock Checker")
 
 st.markdown("""
-Upload your assortment CSV and the 6 Farfetch stock point CSVs.  
+Upload your assortment CSV and the 6 Farfetch stock point CSVs.
 
-The tool will check each SKU in your assortment against the stock point files using this order per stock point:
-
+Checks order:
 1. SKU  
-2. Netta Product ID (if SKU missing)  
-3. Optional Product ID (if SKU & Netta missing)  
+2. Netta Product ID  
+3. Optional Product ID  
 
-Notes will indicate if SKU is missing but Netta or Optional exists.  
-Summary columns show overall SKU and ID existence per stock point (missing only checked for US, AU, HK, CH).
+Notes indicate when SKU is missing but IDs exist.  
+Summary columns report existence/missing (only US, AU, HK, CH).
 """)
 
 # --- Upload Assortment CSV ---
 assortment_file = st.file_uploader("Upload Assortment CSV", type=["csv"])
-assortment_df = None
 if assortment_file is not None:
     assortment_df = pd.read_csv(assortment_file, dtype=str)
     assortment_df.columns = assortment_df.columns.str.strip()
-    # Strip values
+    # strip all values
     for col in ['SKU', 'Netta product ID', 'Optional product ID']:
-        if col in assortment_df.columns:
-            assortment_df[col] = assortment_df[col].astype(str).str.strip()
-
+        assortment_df[col] = assortment_df[col].astype(str).str.strip()
+    
+    # Check required columns
     required_cols = ['SKU', 'Netta product ID', 'Optional product ID']
     missing_cols = [col for col in required_cols if col not in assortment_df.columns]
     if missing_cols:
-        st.error(f"Assortment CSV must contain columns: {', '.join(missing_cols)}")
+        st.error(f"Assortment CSV missing columns: {', '.join(missing_cols)}")
         st.stop()
 
-# --- Upload Stock Point CSVs ---
+# --- Upload Stock CSVs ---
 st.markdown("Upload 6 stock point CSVs (HK, US, DE, CH, JP, AU).")
 stock_files = st.file_uploader("Upload Stock CSVs", type=["csv"], accept_multiple_files=True)
 
@@ -44,7 +42,6 @@ if assortment_file is not None and len(stock_files) > 0:
         filename = f.name.lower()
         df = pd.read_csv(f, dtype=str)
         df.columns = df.columns.str.strip()
-        # Strip values
         for col in df.columns:
             df[col] = df[col].astype(str).str.strip()
         if 'hk' in filename: stock_dfs['HK'] = df
@@ -56,7 +53,7 @@ if assortment_file is not None and len(stock_files) > 0:
 
     missing_points = [pt for pt in ['HK','US','DE','CH','JP','AU'] if pt not in stock_dfs]
     if missing_points:
-        st.warning(f"Missing stock point CSVs for: {', '.join(missing_points)}. You can continue, unmatched points will remain empty.")
+        st.warning(f"Missing stock point CSVs: {', '.join(missing_points)}")
 
     if st.button("Process Files"):
         with st.spinner("Processing files..."):
@@ -67,87 +64,74 @@ if assortment_file is not None and len(stock_files) > 0:
                 output_df[f'{sp}_ffid'] = ''
                 output_df[f'{sp}_note'] = ''
 
-            ffid_results = {sp: {} for sp in ['HK','US','DE','CH','JP','AU']}
+            ffid_results = {sp:{} for sp in ['HK','US','DE','CH','JP','AU']}
 
             # --- Search function ---
             def search_stock(stock_df, col, value):
                 if col not in stock_df.columns or pd.isna(value):
                     return None
                 value_str = str(value).strip()
-                stock_vals = stock_df[col].astype(str).str.strip()
-                match = stock_df[stock_vals == value_str]
+                match = stock_df[stock_df[col].astype(str).str.strip() == value_str]
                 if not match.empty:
-                    ffid_list = match['Product ID'].astype(str).str[:8].tolist()  # limit to 8 digits
-                    ffid_unique = list(dict.fromkeys(ffid_list))
-                    return ffid_unique if ffid_unique else None
+                    ffid = str(match['Product ID'].iloc[0]).strip()[:8]  # first FFID, 8 digits
+                    return ffid
                 return None
 
             # --- Process each row ---
             for idx, row in output_df.iterrows():
                 for sp, df in stock_dfs.items():
                     note_col = f'{sp}_note'
-
-                    # Step 1: SKU
-                    ffids_sku = search_stock(df, 'Partner barcode', row['SKU'])
-                    if ffids_sku:
-                        ffid_results[sp][idx] = {'sku': ffids_sku, 'id': None}
-                        output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids_sku)
+                    # 1) SKU
+                    ffid_sku = search_stock(df, 'Partner barcode', row['SKU'])
+                    if ffid_sku:
+                        ffid_results[sp][idx] = {'sku': ffid_sku, 'id': None}
+                        output_df.at[idx, f'{sp}_ffid'] = ffid_sku
                         output_df.at[idx, 'found_via'] = 'SKU'
                         continue
-
-                    # Step 2: Netta Product ID
-                    ffids_net = search_stock(df, 'Partner product ID', row['Netta product ID'])
-                    if ffids_net:
-                        ffid_results[sp][idx] = {'sku': None, 'id': ffids_net}
-                        output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids_net)
+                    # 2) Netta Product ID
+                    ffid_net = search_stock(df, 'Partner product ID', row['Netta product ID'])
+                    if ffid_net:
+                        ffid_results[sp][idx] = {'sku': None, 'id': ffid_net}
+                        output_df.at[idx, f'{sp}_ffid'] = ffid_net
                         output_df.at[idx, note_col] = 'Netta ID exists, SKU missing'
                         if output_df.at[idx, 'found_via'] != 'SKU':
                             output_df.at[idx, 'found_via'] = 'Netta Product ID'
                         continue
-
-                    # Step 3: Optional Product ID
-                    ffids_opt = search_stock(df, 'Partner product ID', row['Optional product ID'])
-                    if ffids_opt:
-                        ffid_results[sp][idx] = {'sku': None, 'id': ffids_opt}
-                        output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids_opt)
+                    # 3) Optional Product ID
+                    ffid_opt = search_stock(df, 'Partner product ID', row['Optional product ID'])
+                    if ffid_opt:
+                        ffid_results[sp][idx] = {'sku': None, 'id': ffid_opt}
+                        output_df.at[idx, f'{sp}_ffid'] = ffid_opt
                         output_df.at[idx, note_col] = 'Optional ID exists, SKU & Netta missing'
-                        if output_df.at[idx, 'found_via'] not in ['SKU', 'Netta Product ID']:
+                        if output_df.at[idx, 'found_via'] not in ['SKU','Netta Product ID']:
                             output_df.at[idx, 'found_via'] = 'Optional Product ID'
 
             # --- Summary columns ---
-            all_stock_points = ['AU','CH','HK','US','JP','DE']
+            all_points = ['AU','CH','HK','US','JP','DE']
             missing_only = ['AU','CH','HK','US']
-
             sku_summary_list = []
             id_summary_list = []
 
             for idx, row in output_df.iterrows():
-                # SKU summary
-                sku_exists = []
-                sku_missing = []
-                for sp in all_stock_points:
+                sku_exists, sku_missing = [], []
+                id_exists, id_missing = [], []
+                for sp in all_points:
                     res = ffid_results.get(sp, {}).get(idx, {})
                     if res.get('sku'):
                         sku_exists.append(sp)
                     elif sp in missing_only:
                         sku_missing.append(sp)
-                sku_summary = f"SKU exists in: {', '.join(sku_exists) if sku_exists else 'none'}"
-                if sku_missing:
-                    sku_summary += f". SKU missing from: {', '.join(sku_missing)}"
-                sku_summary_list.append(sku_summary)
-
-                # ID summary
-                id_exists = []
-                id_missing = []
-                for sp in all_stock_points:
-                    res = ffid_results.get(sp, {}).get(idx, {})
                     if res.get('id'):
                         id_exists.append(sp)
                     elif sp in missing_only:
                         id_missing.append(sp)
+                sku_summary = f"SKU exists in: {', '.join(sku_exists) if sku_exists else 'none'}"
+                if sku_missing:
+                    sku_summary += f". SKU missing from: {', '.join(sku_missing)}"
                 id_summary = f"ID exists in: {', '.join(id_exists) if id_exists else 'none'}"
                 if id_missing:
                     id_summary += f". ID missing from: {', '.join(id_missing)}"
+                sku_summary_list.append(sku_summary)
                 id_summary_list.append(id_summary)
 
             output_df['SKU_summary'] = sku_summary_list
