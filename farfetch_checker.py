@@ -20,7 +20,7 @@ Summary columns at the end show overall SKU and ID existence per stock point, wi
 assortment_file = st.file_uploader("Upload Assortment CSV", type=["csv"])
 assortment_df = None
 if assortment_file is not None:
-    assortment_df = pd.read_csv(assortment_file)
+    assortment_df = pd.read_csv(assortment_file, dtype=str)
     assortment_df.columns = assortment_df.columns.str.strip()  # remove spaces
 
     # Ensure required columns exist
@@ -39,7 +39,7 @@ if assortment_file is not None and len(stock_files) > 0:
     stock_dfs = {}
     for f in stock_files:
         filename = f.name.lower()
-        df = pd.read_csv(f)
+        df = pd.read_csv(f, dtype=str)  # read all as string
         df.columns = df.columns.str.strip()  # strip spaces from headers
         if 'hk' in filename: stock_dfs['HK'] = df
         elif 'us' in filename: stock_dfs['US'] = df
@@ -65,7 +65,6 @@ if assortment_file is not None and len(stock_files) > 0:
 
             # Store search results to avoid re-scanning later
             ffid_results = {sp: {} for sp in ['HK','US','DE','CH','JP','AU']}
-            id_results = {sp: {} for sp in ['HK','US','DE','CH','JP','AU']}
 
             # Function to search in a stock dataframe (deduplicated)
             def search_stock(stock_df, col, value):
@@ -74,8 +73,12 @@ if assortment_file is not None and len(stock_files) > 0:
                 match = stock_df[stock_df[col] == value]
                 if not match.empty:
                     ffid_list = match['Product ID'].astype(str).tolist()
-                    ffid_unique = list(dict.fromkeys(ffid_list))  # remove duplicates, preserve order
-                    return ffid_unique
+                    # Only take first 8 digits of each FFID
+                    ffid_list = [x[:8] for x in ffid_list]
+                    # Remove duplicates, preserve order
+                    ffid_unique = list(dict.fromkeys(ffid_list))
+                    # Keep only first FFID per stock point
+                    return ffid_unique[:1] if ffid_unique else None
                 return None
 
             # --- Process each row and store results ---
@@ -87,7 +90,7 @@ if assortment_file is not None and len(stock_files) > 0:
                     ffids_sku = search_stock(df, 'Partner barcode', row['SKU'])
                     if ffids_sku:
                         ffid_results[sp][idx] = {'sku': ffids_sku, 'id': None}
-                        output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids_sku)
+                        output_df.at[idx, f'{sp}_ffid'] = ffids_sku[0]
                         output_df.at[idx, 'found_via'] = 'SKU'
                         continue
 
@@ -95,7 +98,7 @@ if assortment_file is not None and len(stock_files) > 0:
                     ffids_net = search_stock(df, 'Partner product ID', row['Netta product ID'])
                     if ffids_net:
                         ffid_results[sp][idx] = {'sku': None, 'id': ffids_net}
-                        output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids_net)
+                        output_df.at[idx, f'{sp}_ffid'] = ffids_net[0]
                         output_df.at[idx, note_col] = 'Netta ID exists, SKU missing'
                         if output_df.at[idx, 'found_via'] != 'SKU':
                             output_df.at[idx, 'found_via'] = 'Netta Product ID'
@@ -105,7 +108,7 @@ if assortment_file is not None and len(stock_files) > 0:
                     ffids_opt = search_stock(df, 'Partner product ID', row['Optional product ID'])
                     if ffids_opt:
                         ffid_results[sp][idx] = {'sku': None, 'id': ffids_opt}
-                        output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids_opt)
+                        output_df.at[idx, f'{sp}_ffid'] = ffids_opt[0]
                         output_df.at[idx, note_col] = 'Optional ID exists, SKU & Netta missing'
                         if output_df.at[idx, 'found_via'] not in ['SKU', 'Netta Product ID']:
                             output_df.at[idx, 'found_via'] = 'Optional Product ID'
@@ -153,7 +156,7 @@ if assortment_file is not None and len(stock_files) > 0:
             st.dataframe(output_df)
 
             # --- Download button ---
-            csv = output_df.to_csv(index=False).encode('utf-8')
+            csv = output_df.to_csv(index=False, index_label=False).encode('utf-8')
             st.download_button(
                 label="Download Result CSV",
                 data=csv,
