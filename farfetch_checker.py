@@ -1,131 +1,196 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="Farfetch Stock Checker", layout="wide")
-st.title("Farfetch Stock Checker")
+st.set_page_config(page_title="Farfetch SKU Checker", layout="wide")
+st.title("Farfetch SKU Checker — Ordered Checks (SKU → Netta → Optional)")
 
 st.markdown("""
-Upload your assortment CSV and the 6 Farfetch stock point CSVs. The tool will check each SKU in your assortment against the stock point files and return which stock points it exists in, using the following order:
-1. SKU
-2. Netta Product ID
-3. Optional Product ID
+### Required Column Headers (no trailing spaces)
+
+**Assortment file:**
+- `SKU`
+- `Netta product ID`
+- `Optional product ID`
+
+**Farfetch stock exports:**
+- `Product ID`
+- `Partner product ID`
+- `Partner barcode`
 """)
 
-# --- Upload Assortment CSV ---
-assortment_file = st.file_uploader("Upload Assortment CSV", type=["csv"])
-if assortment_file is not None:
-    assortment_df = pd.read_csv(assortment_file)
-    
-    # Strip spaces from column names
-    assortment_df.columns = assortment_df.columns.str.strip()
-    
-    # Ensure required columns exist
-    required_cols = ['SKU', 'Netta product ID', 'Optional product ID']
-    for col in required_cols:
-        if col not in assortment_df.columns:
-            st.error(f"Assortment CSV must contain column: {col}")
-            st.stop()
+# ------------------------------------------------------------
+# Normalization helpers
+# ------------------------------------------------------------
+def normalize_value(v):
+    if pd.isna(v):
+        return ""
+    return str(v).strip().upper()
 
-    # Normalize columns to string and strip spaces
-    for col in required_cols:
-        assortment_df[col] = assortment_df[col].astype(str).str.strip()
+def normalize_series(col):
+    return col.fillna("").astype(str).str.strip().str.upper()
 
-# --- Upload Stock Point CSVs ---
-st.markdown("Upload 6 stock point CSVs (HK, US, DE, CH, JP, AU).")
-stock_files = st.file_uploader("Upload Stock CSVs", type=["csv"], accept_multiple_files=True)
+# ------------------------------------------------------------
+# Upload assortment
+# ------------------------------------------------------------
+assortment_file = st.file_uploader("Upload Assortment CSV/XLSX", type=["csv", "xlsx"])
 
-if assortment_file is not None and len(stock_files) > 0:
-    
-    # Load stock point files into a dictionary
-    stock_dfs = {}
-    for f in stock_files:
-        filename = f.name.lower()
-        df = pd.read_csv(f)
-        
-        # Strip spaces from column names
-        df.columns = df.columns.str.strip()
-        
-        # Normalize string columns
-        for col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
-        
-        if 'hk' in filename:
-            stock_dfs['HK'] = df
-        elif 'us' in filename:
-            stock_dfs['US'] = df
-        elif 'de' in filename:
-            stock_dfs['DE'] = df
-        elif 'ch' in filename:
-            stock_dfs['CH'] = df
-        elif 'jp' in filename:
-            stock_dfs['JP'] = df
-        elif 'au' in filename:
-            stock_dfs['AU'] = df
-    
-    missing_points = [pt for pt in ['HK','US','DE','CH','JP','AU'] if pt not in stock_dfs]
-    if missing_points:
-        st.warning(f"Missing stock point CSVs for: {', '.join(missing_points)}. You can continue, unmatched points will remain empty.")
+if not assortment_file:
+    st.stop()
 
-    if st.button("Process Files"):
-        # Prepare output dataframe
-        output_df = assortment_df.copy()
-        output_df['found_via'] = 'none'
-        
-        # Initialize stock point columns
-        for sp in ['HK','US','DE','CH','JP','AU']:
-            output_df[f'{sp}_ffid'] = ''
-        
-        # Function to search in a stock dataframe
-        def search_stock(stock_df, col, value):
-            if pd.isna(value) or value == '':
-                return None
-            if col not in stock_df.columns:
-                return None
-            match = stock_df[stock_df[col] == value]
-            if not match.empty:
-                # Use the correct Product ID column
-                if 'Product ID' in stock_df.columns:
-                    return match['Product ID'].tolist()
-            return None
-        
-        # Process each row
-        for idx, row in output_df.iterrows():
-            found = False
-            # Step 1: check SKU
-            for sp, df in stock_dfs.items():
-                ffids = search_stock(df, 'Partner barcode', row['SKU'])
-                if ffids:
-                    output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids)
-                    found = True
-            if found:
-                output_df.at[idx, 'found_via'] = 'SKU'
+# Load assortment
+try:
+    if assortment_file.name.lower().endswith(".xlsx"):
+        assort = pd.read_excel(assortment_file, dtype=str)
+    else:
+        assort = pd.read_csv(assortment_file, dtype=str)
+except Exception as e:
+    st.error(f"Error reading assortment file: {e}")
+    st.stop()
+
+required_cols = ["SKU", "Netta product ID", "Optional product ID"]
+missing = [c for c in required_cols if c not in assort.columns]
+if missing:
+    st.error(f"Assortment file is missing required columns: {missing}")
+    st.stop()
+
+# Normalize values
+assort["SKU"] = normalize_series(assort["SKU"])
+assort["Netta product ID"] = normalize_series(assort["Netta product ID"])
+assort["Optional product ID"] = normalize_series(assort["Optional product ID"])
+
+st.subheader("Assortment preview")
+st.dataframe(assort.head(10))
+
+# ------------------------------------------------------------
+# Upload stock exports
+# ------------------------------------------------------------
+stock_files = st.file_uploader(
+    "Upload Farfetch stock exports (HK, US, DE, CH, JP, AU)",
+    type=["csv", "xlsx"],
+    accept_multiple_files=True
+)
+
+if not stock_files:
+    st.stop()
+
+stock_points = ["HK", "US", "DE", "CH", "JP", "AU"]
+stock_dfs = {}
+
+for f in stock_files:
+    fname = f.name.lower()
+
+    try:
+        if fname.endswith(".xlsx"):
+            df = pd.read_excel(f, dtype=str)
+        else:
+            df = pd.read_csv(f, dtype=str)
+    except Exception as e:
+        st.error(f"Error loading {f.name}: {e}")
+        continue
+
+    # required FF headers
+    required_ff_cols = ["Product ID", "Partner product ID", "Partner barcode"]
+    missing_ff = [c for c in required_ff_cols if c not in df.columns]
+    if missing_ff:
+        st.error(f"File {f.name} missing required columns: {missing_ff}")
+        st.stop()
+
+    # normalize data
+    df["Product ID"] = normalize_series(df["Product ID"])
+    df["Partner product ID"] = normalize_series(df["Partner product ID"])
+    df["Partner barcode"] = normalize_series(df["Partner barcode"])
+
+    # detect GEO
+    geo = None
+    for sp in stock_points:
+        if sp.lower() in fname:
+            geo = sp
+            break
+
+    if not geo:
+        st.warning(f"Could not detect GEO from filename: {f.name}")
+        continue
+
+    stock_dfs[geo] = df
+
+    st.subheader(f"{geo} Stock Preview")
+    st.dataframe(df.head(5))
+
+if not stock_dfs:
+    st.error("No valid stock export files loaded.")
+    st.stop()
+
+
+# ------------------------------------------------------------
+# Run matching
+# ------------------------------------------------------------
+if st.button("Run Farfetch Check"):
+
+    results = assort.copy()
+
+    # Output columns
+    for sp in stock_points:
+        results[f"{sp}_FF_ID"] = ""
+        results[f"{sp}_FOUND_VIA"] = ""
+
+    # Loop over GEOs
+    for sp in stock_points:
+        if sp not in stock_dfs:
+            continue
+
+        df = stock_dfs[sp]
+
+        # Fast lookup dictionaries
+        sku_map = {}
+        partner_map = {}
+
+        for _, row in df.iterrows():
+            pb = row["Partner barcode"]
+            pp = row["Partner product ID"]
+            pid = row["Product ID"]
+
+            if pb not in sku_map:
+                sku_map[pb] = pid
+
+            if pp not in partner_map:
+                partner_map[pp] = pid
+
+        # Matching logic per product
+        for idx, r in results.iterrows():
+
+            sku = r["SKU"]
+            netta = r["Netta product ID"]
+            opt = r["Optional product ID"]
+
+            # 1) Try SKU → Partner barcode
+            if sku in sku_map:
+                results.at[idx, f"{sp}_FF_ID"] = sku_map[sku]
+                results.at[idx, f"{sp}_FOUND_VIA"] = "SKU"
                 continue
-            # Step 2: check Netta Product ID
-            for sp, df in stock_dfs.items():
-                ffids = search_stock(df, 'Partner product ID', row['Netta product ID'])
-                if ffids:
-                    output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids)
-                    found = True
-            if found:
-                output_df.at[idx, 'found_via'] = 'Netta Product ID'
+
+            # 2) Try Netta → Partner product ID
+            if netta in partner_map:
+                results.at[idx, f"{sp}_FF_ID"] = partner_map[netta]
+                results.at[idx, f"{sp}_FOUND_VIA"] = "NETTA"
                 continue
-            # Step 3: check Optional Product ID
-            for sp, df in stock_dfs.items():
-                ffids = search_stock(df, 'Partner product ID', row['Optional product ID'])
-                if ffids:
-                    output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids)
-                    found = True
-            if found:
-                output_df.at[idx, 'found_via'] = 'Optional Product ID'
-        
-        st.success("Processing complete!")
-        st.dataframe(output_df)
-        
-        # Download button
-        csv = output_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Download Result CSV",
-            data=csv,
-            file_name="farfetch_checked.csv",
-            mime='text/csv'
-        )
+
+            # 3) Try Optional → Partner product ID
+            if opt in partner_map:
+                results.at[idx, f"{sp}_FF_ID"] = partner_map[opt]
+                results.at[idx, f"{sp}_FOUND_VIA"] = "OPTIONAL"
+                continue
+
+            # Not found
+            results.at[idx, f"{sp}_FOUND_VIA"] = "NOT FOUND"
+
+    st.success("Matching complete!")
+
+    st.dataframe(results)
+
+    # Download CSV
+    st.download_button(
+        "Download Results CSV",
+        results.to_csv(index=False).encode("utf-8"),
+        "farfetch_results.csv",
+        "text/csv"
+    )
