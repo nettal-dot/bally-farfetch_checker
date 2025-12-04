@@ -1,12 +1,11 @@
 import pandas as pd
 import streamlit as st
 
-# -----------------------------
-# Streamlit app
-# -----------------------------
 st.title("Farfetch SKU Checker")
 
+# -----------------------------
 # Upload files
+# -----------------------------
 assortment_file = st.file_uploader("Upload Assortment File (Excel/CSV)", type=["xlsx", "csv"])
 stock_files = st.file_uploader(
     "Upload Stock Export Files (one per stock point, Excel/CSV, name must include stock point)",
@@ -33,11 +32,16 @@ if assortment_file and stock_files:
     if missing_cols:
         st.error(f"Assortment file missing required columns: {', '.join(missing_cols)}")
         st.stop()
-    
+
+    # Strip spaces, convert to string, uppercase for consistent matching
+    for col in expected_cols:
+        df_assortment[col] = df_assortment[col].astype(str).str.strip().str.upper()
+
     # -----------------------------
     # Read stock exports
     # -----------------------------
     stock_data = {}
+    required_stock_cols = ['Partner barcode', 'Product ID', 'Partner product ID']
     for f in stock_files:
         try:
             if f.name.endswith('.xlsx'):
@@ -50,18 +54,19 @@ if assortment_file and stock_files:
 
         stock_point = f.name.split('_')[0].upper()
 
-        # Check for required stock export columns
-        required_stock_cols = ['Partner barcode', 'Product ID', 'Partner product ID']
         if not all(col in df_stock.columns for col in required_stock_cols):
             st.warning(f"File {f.name} missing required columns: {', '.join(required_stock_cols)}")
             continue
 
-        # Keep only needed columns and rename
+        # Keep only needed columns, rename, strip spaces, uppercase
         df_sp = df_stock[required_stock_cols].rename(columns={
             'Partner barcode': 'SKU',
             'Product ID': 'FF_ID',
             'Partner product ID': 'Product_ID'
         })
+
+        for col in ['SKU', 'Product_ID', 'FF_ID']:
+            df_sp[col] = df_sp[col].astype(str).str.strip().str.upper()
 
         stock_data[stock_point] = df_sp
 
