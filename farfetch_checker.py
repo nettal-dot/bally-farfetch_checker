@@ -12,7 +12,8 @@ The tool will check each SKU in your assortment against the stock point files an
 2. Netta Product ID (if SKU missing)  
 3. Optional Product ID (if SKU & Netta missing)  
 
-Notes will indicate if SKU is missing but Netta or Optional exists.
+Notes will indicate if SKU is missing but Netta or Optional exists.  
+Summary columns at the end show overall SKU and ID existence per stock point.
 """)
 
 # --- Upload Assortment CSV ---
@@ -99,6 +100,48 @@ if assortment_file is not None and len(stock_files) > 0:
                         output_df.at[idx, note_col] = 'Optional ID exists, SKU & Netta missing'
                         if output_df.at[idx, 'found_via'] not in ['SKU', 'Netta Product ID']:
                             output_df.at[idx, 'found_via'] = 'Optional Product ID'
+
+            # --- Add summary columns ---
+            summary_sku_cols = ['AU','CH','HK','US','JP','DE']  # check existence
+            summary_sku_missing = ['AU','CH','HK','US']        # check only these for missing
+            summary_id_cols = ['AU','CH','HK','US','JP','DE']
+
+            sku_summary_list = []
+            id_summary_list = []
+
+            for idx, row in output_df.iterrows():
+                # --- SKU summary ---
+                sku_exists = []
+                sku_missing = []
+                for sp in summary_sku_cols:
+                    ffid_sku = search_stock(stock_dfs.get(sp, pd.DataFrame()), 'Partner barcode', row['SKU'])
+                    if ffid_sku:
+                        sku_exists.append(sp)
+                    elif sp in summary_sku_missing:
+                        sku_missing.append(sp)
+                sku_summary = f"SKU exists in: {', '.join(sku_exists) if sku_exists else 'none'}"
+                if sku_missing:
+                    sku_summary += f". SKU missing from: {', '.join(sku_missing)}"
+                sku_summary_list.append(sku_summary)
+
+                # --- ID summary (Netta or Optional) ---
+                id_exists = []
+                id_missing = []
+                for sp in summary_id_cols:
+                    df_sp = stock_dfs.get(sp, pd.DataFrame())
+                    ffid_net = search_stock(df_sp, 'Partner product ID', row['Netta product ID'])
+                    ffid_opt = search_stock(df_sp, 'Partner product ID', row['Optional product ID'])
+                    if ffid_net or ffid_opt:
+                        id_exists.append(sp)
+                    else:
+                        id_missing.append(sp)
+                id_summary = f"ID exists in: {', '.join(id_exists) if id_exists else 'none'}"
+                if id_missing:
+                    id_summary += f". ID missing from: {', '.join(id_missing)}"
+                id_summary_list.append(id_summary)
+
+            output_df['SKU_summary'] = sku_summary_list
+            output_df['ID_summary'] = id_summary_list
 
             st.success("Processing complete!")
             st.dataframe(output_df)
