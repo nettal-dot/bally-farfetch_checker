@@ -17,24 +17,25 @@ The tool will check each SKU in your assortment against the stock point files an
 assortment_file = st.file_uploader("Upload Assortment CSV", type=["csv"])
 if assortment_file is not None:
     assortment_df = pd.read_csv(assortment_file, dtype=str)
-    # Ensure required columns exist
-    required_cols = ['SKU', 'Netta product ID', 'Optional product ID']
-    for col in required_cols:
-        if col not in assortment_df.columns:
+    # Strip values
+    for col in ['SKU', 'Netta product ID', 'Optional product ID']:
+        if col in assortment_df.columns:
+            assortment_df[col] = assortment_df[col].astype(str).str.strip()
+        else:
             st.error(f"Assortment CSV must contain column: {col}")
             st.stop()
 
-# --- Upload Stock Point CSVs ---
+# --- Upload Stock CSVs ---
 st.markdown("Upload 6 stock point CSVs (HK, US, DE, CH, JP, AU).")
 stock_files = st.file_uploader("Upload Stock CSVs", type=["csv"], accept_multiple_files=True)
 
 if assortment_file is not None and len(stock_files) > 0:
-    # Load stock point files into a dictionary
     stock_dfs = {}
     for f in stock_files:
         filename = f.name.lower()
         df = pd.read_csv(f, dtype=str)
-        df.columns = df.columns.str.strip()
+        df.columns = df.columns.str.strip()  # strip column names
+        # Strip all values
         for col in df.columns:
             df[col] = df[col].astype(str).str.strip()
         if 'hk' in filename: stock_dfs['HK'] = df
