@@ -63,13 +63,15 @@ if assortment_file is not None and len(stock_files) > 0:
                 output_df[f'{sp}_ffid'] = ''
                 output_df[f'{sp}_note'] = ''
 
-            # Function to search in a stock dataframe
+            # Function to search in a stock dataframe (deduplicated)
             def search_stock(stock_df, col, value):
                 if col not in stock_df.columns or pd.isna(value):
                     return None
                 match = stock_df[stock_df[col] == value]
                 if not match.empty:
-                    return match['Product ID'].astype(str).tolist()  # Farfetch Product ID
+                    ffid_list = match['Product ID'].astype(str).tolist()
+                    ffid_unique = list(dict.fromkeys(ffid_list))  # remove duplicates, preserve order
+                    return ffid_unique
                 return None
 
             # --- Process each row ---
@@ -103,7 +105,7 @@ if assortment_file is not None and len(stock_files) > 0:
 
             # --- Add summary columns ---
             summary_sku_cols = ['AU','CH','HK','US','JP','DE']  # check existence
-            summary_sku_missing = ['AU','CH','HK','US']        # check only these for missing
+            summary_sku_missing = ['AU','CH','HK','US']        # only these for missing
             summary_id_cols = ['AU','CH','HK','US','JP','DE']
 
             sku_summary_list = []
