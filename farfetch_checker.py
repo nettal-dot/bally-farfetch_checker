@@ -1,112 +1,104 @@
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
-st.set_page_config(page_title="Farfetch Stock Checker", layout="wide")
-st.title("Farfetch Stock Checker")
+# -----------------------------
+# Streamlit app
+# -----------------------------
+st.title("Farfetch SKU Checker")
 
-st.markdown("""
-Upload your assortment CSV and the 6 Farfetch stock point CSVs. 
+# Upload files
+assortment_file = st.file_uploader("Upload Assortment File (Excel/CSV)", type=["xlsx", "csv"])
+stock_files = st.file_uploader("Upload Stock Export Files (one per stock point, Excel/CSV, name must include stock point)", type=["xlsx", "csv"], accept_multiple_files=True)
 
-The tool will check each SKU in your assortment against the stock point files and return which stock points it exists in, using the following order:
-1. SKU
-2. Netta Product ID
-3. Optional Product ID
-""")
+if assortment_file and stock_files:
+    # Read assortment file
+    if assortment_file.name.endswith('.xlsx'):
+        df_assortment = pd.read_excel(assortment_file)
+    else:
+        df_assortment = pd.read_csv(assortment_file)
 
-# --- Upload Assortment CSV ---
-assortment_file = st.file_uploader("Upload Assortment CSV", type=["csv"])
-if assortment_file is not None:
-    assortment_df = pd.read_csv(assortment_file, dtype=str)
-    # Strip values
-    for col in ['SKU', 'Netta product ID', 'Optional product ID']:
-        if col in assortment_df.columns:
-            assortment_df[col] = assortment_df[col].astype(str).str.strip()
-        else:
-            st.error(f"Assortment CSV must contain column: {col}")
+    # Ensure columns exist
+    expected_cols = ['SKU', 'Netta Product ID', 'Optional Product ID']
+    for col in expected_cols:
+        if col not in df_assortment.columns:
+            st.error(f"Assortment file missing required column: {col}")
             st.stop()
-
-# --- Upload Stock CSVs ---
-st.markdown("Upload 6 stock point CSVs (HK, US, DE, CH, JP, AU).")
-stock_files = st.file_uploader("Upload Stock CSVs", type=["csv"], accept_multiple_files=True)
-
-if assortment_file is not None and len(stock_files) > 0:
-    stock_dfs = {}
+    
+    # Read stock exports
+    stock_data = {}
     for f in stock_files:
-        filename = f.name.lower()
-        df = pd.read_csv(f, dtype=str)
-        df.columns = df.columns.str.strip()  # strip column names
-        # Strip all values
-        for col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
-        if 'hk' in filename: stock_dfs['HK'] = df
-        elif 'us' in filename: stock_dfs['US'] = df
-        elif 'de' in filename: stock_dfs['DE'] = df
-        elif 'ch' in filename: stock_dfs['CH'] = df
-        elif 'jp' in filename: stock_dfs['JP'] = df
-        elif 'au' in filename: stock_dfs['AU'] = df
+        if f.name.endswith('.xlsx'):
+            df_stock = pd.read_excel(f)
+        else:
+            df_stock = pd.read_csv(f)
 
-    missing_points = [pt for pt in ['HK','US','DE','CH','JP','AU'] if pt not in stock_dfs]
-    if missing_points:
-        st.warning(f"Missing stock point CSVs for: {', '.join(missing_points)}. You can continue, unmatched points will remain empty.")
+        # Determine stock point from file name (e.g., "HK_stock.xlsx")
+        stock_point = f.name.split('_')[0].upper()
+        stock_data[stock_point] = df_stock[['H', 'A', 'F']].rename(columns={
+            'H': 'SKU',
+            'A': 'FF_ID',
+            'F': 'Product_ID'
+        })
 
-    if st.button("Process Files"):
-        output_df = assortment_df.copy()
-        output_df['found_via'] = 'none'
-
-        # Initialize stock point columns
-        for sp in ['HK','US','DE','CH','JP','AU']:
-            output_df[f'{sp}_ffid'] = ''
-
-        # Function to search in a stock dataframe (return first FFID, 8 digits)
-        def search_stock(stock_df, col, value):
-            if pd.isna(value) or col not in stock_df.columns:
-                return None
-            match = stock_df[stock_df[col].astype(str).str.strip() == str(value).strip()]
-            if not match.empty:
-                ffid = str(match['Product ID'].iloc[0])[:8]  # only first FFID, 8 digits
-                return ffid
-            return None
-
-        # Process each row
-        for idx, row in output_df.iterrows():
-            found = False
-            # Step 1: check SKU
-            for sp, df in stock_dfs.items():
-                ffid = search_stock(df, 'Partner barcode', row['SKU'])
-                if ffid:
-                    output_df.at[idx, f'{sp}_ffid'] = ffid
-                    found = True
-            if found:
-                output_df.at[idx, 'found_via'] = 'SKU'
+    # Initialize output dataframe
+    output = df_assortment.copy()
+    
+    stock_points = ['HK', 'US', 'DE', 'CH', 'JP', 'AU']
+    for sp in stock_points:
+        ff_ids = []
+        for idx, row in df_assortment.iterrows():
+            df_sp = stock_data.get(sp)
+            if df_sp is None:
+                ff_ids.append(None)
                 continue
+            
+            # Check SKU
+            match_sku = df_sp[df_sp['SKU'] == row['SKU']]
+            if not match_sku.empty:
+                ff_ids.append(match_sku['FF_ID'].iloc[0])
+            else:
+                # Check Netta Product ID
+                match_net = df_sp[df_sp['Product_ID'] == row['Netta Product ID']]
+                if not match_net.empty:
+                    ff_ids.append(match_net['FF_ID'].iloc[0])
+                else:
+                    # Check Optional Product ID
+                    match_opt = df_sp[df_sp['Product_ID'] == row['Optional Product ID']]
+                    if not match_opt.empty:
+                        ff_ids.append(match_opt['FF_ID'].iloc[0])
+                    else:
+                        ff_ids.append(None)
+        output[sp] = ff_ids
 
-            # Step 2: check Netta Product ID
-            for sp, df in stock_dfs.items():
-                ffid = search_stock(df, 'Partner product ID', row['Netta product ID'])
-                if ffid:
-                    output_df.at[idx, f'{sp}_ffid'] = ffid
-                    found = True
-            if found:
-                output_df.at[idx, 'found_via'] = 'Netta Product ID'
-                continue
+    # -----------------------------
+    # Create summary columns
+    # -----------------------------
+    def sku_summary(row):
+        exists = []
+        missing = []
+        for sp in ['AU', 'CH', 'HK', 'US']:  # Only consider these for summary
+            if pd.notna(row[sp]):
+                exists.append(sp)
+            else:
+                missing.append(sp)
+        return f"SKU exists in: {', '.join(exists)}. SKU missing from: {', '.join(missing)}"
 
-            # Step 3: check Optional Product ID
-            for sp, df in stock_dfs.items():
-                ffid = search_stock(df, 'Partner product ID', row['Optional product ID'])
-                if ffid:
-                    output_df.at[idx, f'{sp}_ffid'] = ffid
-                    found = True
-            if found:
-                output_df.at[idx, 'found_via'] = 'Optional Product ID'
+    def product_id_summary(row):
+        exists = []
+        missing = []
+        for sp in ['AU', 'CH', 'HK', 'US']:
+            if pd.notna(row[sp]):
+                exists.append(sp)
+            else:
+                missing.append(sp)
+        return f"Product ID exists in: {', '.join(exists)}. Product ID missing from: {', '.join(missing)}"
 
-        st.success("Processing complete!")
-        st.dataframe(output_df)
+    output['SKU Summary'] = output.apply(sku_summary, axis=1)
+    output['Product ID Summary'] = output.apply(product_id_summary, axis=1)
 
-        # Download button
-        csv = output_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Download Result CSV",
-            data=csv,
-            file_name="farfetch_checked.csv",
-            mime='text/csv'
-        )
+    # Display the result
+    st.dataframe(output)
+
+    # Allow download
+    csv = output.to_csv(index=False).encode('utf-8')
+    st.download_button("Download Result as CSV", csv, "farfetch_check_result.csv", "text/csv")
