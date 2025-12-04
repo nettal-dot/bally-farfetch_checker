@@ -5,11 +5,14 @@ st.set_page_config(page_title="Farfetch Stock Checker", layout="wide")
 st.title("Farfetch Stock Checker")
 
 st.markdown("""
-Upload your assortment CSV and the 6 Farfetch stock point CSVs. 
-The tool will check each SKU in your assortment against the stock point files and return which stock points it exists in, using the following order:
-1. SKU
-2. Netta Product ID
-3. Optional Product ID
+Upload your assortment CSV and the 6 Farfetch stock point CSVs.  
+The tool will check each SKU in your assortment against the stock point files and return which stock points it exists in, using the following order per stock point:
+
+1. SKU  
+2. Netta Product ID (if SKU missing)  
+3. Optional Product ID (if SKU & Netta missing)  
+
+Notes will indicate if SKU is missing but Netta or Optional exists.
 """)
 
 # --- Upload Assortment CSV ---
@@ -17,7 +20,7 @@ assortment_file = st.file_uploader("Upload Assortment CSV", type=["csv"])
 assortment_df = None
 if assortment_file is not None:
     assortment_df = pd.read_csv(assortment_file)
-    assortment_df.columns = assortment_df.columns.str.strip()  # strip extra spaces
+    assortment_df.columns = assortment_df.columns.str.strip()  # remove spaces
 
     # Ensure required columns exist
     required_cols = ['SKU', 'Netta product ID', 'Optional product ID']
@@ -54,9 +57,10 @@ if assortment_file is not None and len(stock_files) > 0:
             output_df = assortment_df.copy()
             output_df['found_via'] = 'none'
 
-            # Initialize stock point columns
+            # Initialize stock point FFID and note columns
             for sp in ['HK','US','DE','CH','JP','AU']:
                 output_df[f'{sp}_ffid'] = ''
+                output_df[f'{sp}_note'] = ''
 
             # Function to search in a stock dataframe
             def search_stock(stock_df, col, value):
@@ -64,46 +68,42 @@ if assortment_file is not None and len(stock_files) > 0:
                     return None
                 match = stock_df[stock_df[col] == value]
                 if not match.empty:
-                    return match['Product ID'].astype(str).tolist()  # Column name in stock CSV
+                    return match['Product ID'].astype(str).tolist()  # Farfetch Product ID
                 return None
 
-            # Process each row
+            # --- Process each row ---
             for idx, row in output_df.iterrows():
-                found = False
-
-                # Step 1: check SKU
                 for sp, df in stock_dfs.items():
-                    ffids = search_stock(df, 'Partner barcode', row['SKU'])
-                    if ffids:
-                        output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids)
-                        found = True
-                if found:
-                    output_df.at[idx, 'found_via'] = 'SKU'
-                    continue
+                    note_col = f'{sp}_note'
 
-                # Step 2: check Netta Product ID
-                for sp, df in stock_dfs.items():
-                    ffids = search_stock(df, 'Partner product ID', row['Netta product ID'])
-                    if ffids:
-                        output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids)
-                        found = True
-                if found:
-                    output_df.at[idx, 'found_via'] = 'Netta Product ID'
-                    continue
+                    # Step 1: Check SKU
+                    ffids_sku = search_stock(df, 'Partner barcode', row['SKU'])
+                    if ffids_sku:
+                        output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids_sku)
+                        output_df.at[idx, 'found_via'] = 'SKU'
+                        continue  # Skip Netta/Optional check for this stock point
 
-                # Step 3: check Optional Product ID
-                for sp, df in stock_dfs.items():
-                    ffids = search_stock(df, 'Partner product ID', row['Optional product ID'])
-                    if ffids:
-                        output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids)
-                        found = True
-                if found:
-                    output_df.at[idx, 'found_via'] = 'Optional Product ID'
+                    # Step 2: Check Netta Product ID
+                    ffids_net = search_stock(df, 'Partner product ID', row['Netta product ID'])
+                    if ffids_net:
+                        output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids_net)
+                        output_df.at[idx, note_col] = 'Netta ID exists, SKU missing'
+                        if output_df.at[idx, 'found_via'] != 'SKU':
+                            output_df.at[idx, 'found_via'] = 'Netta Product ID'
+                        continue  # Skip Optional check for this stock point
+
+                    # Step 3: Check Optional Product ID
+                    ffids_opt = search_stock(df, 'Partner product ID', row['Optional product ID'])
+                    if ffids_opt:
+                        output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids_opt)
+                        output_df.at[idx, note_col] = 'Optional ID exists, SKU & Netta missing'
+                        if output_df.at[idx, 'found_via'] not in ['SKU', 'Netta Product ID']:
+                            output_df.at[idx, 'found_via'] = 'Optional Product ID'
 
             st.success("Processing complete!")
             st.dataframe(output_df)
 
-            # Download button
+            # --- Download button ---
             csv = output_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="Download Result CSV",
