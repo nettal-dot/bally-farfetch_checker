@@ -74,7 +74,7 @@ if assortment_file is not None and len(stock_files) > 0:
             found = False
             # Step 1: check SKU
             for sp, df in stock_dfs.items():
-                ffids = search_stock(df, 'Partner barcode ', row['SKU'])
+                ffids = search_stock(df, 'Partner barcode', row['SKU'])
                 if ffids:
                     output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids)
                     found = True
@@ -83,7 +83,7 @@ if assortment_file is not None and len(stock_files) > 0:
                 continue
             # Step 2: check Netta Product ID
             for sp, df in stock_dfs.items():
-                ffids = search_stock(df, 'Partner product ID ', row['Netta product ID'])
+                ffids = search_stock(df, 'Partner product ID', row['Netta product ID'])
                 if ffids:
                     output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids)
                     found = True
@@ -92,7 +92,7 @@ if assortment_file is not None and len(stock_files) > 0:
                 continue
             # Step 3: check Optional Product ID
             for sp, df in stock_dfs.items():
-                ffids = search_stock(df, 'Partner product ID ', row['Optional product ID'])
+                ffids = search_stock(df, 'Partner product ID', row['Optional product ID'])
                 if ffids:
                     output_df.at[idx, f'{sp}_ffid'] = ','.join(ffids)
                     found = True
