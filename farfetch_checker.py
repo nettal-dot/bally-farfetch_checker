@@ -5,7 +5,7 @@ st.set_page_config(page_title="Farfetch Pre-Upload Checker", layout="wide")
 st.title("Farfetch Pre-Upload Checker")
 
 # -----------------------------
-# FILE UPLOADS (NO LOCAL FILES)
+# FILE UPLOADS
 # -----------------------------
 assortment_file = st.file_uploader(
     "Upload Assortment CSV",
@@ -41,7 +41,9 @@ if assortment_file and all(geo_uploads.values()):
         st.error("Assortment file is missing required columns.")
         st.stop()
 
+    # Prepare result
     result_df = assortment_df[["SKU"]].copy()
+    result_df["SKU"] = result_df["SKU"].astype(str).str.strip()
 
     # Process each GEO
     for geo, uploaded_file in geo_uploads.items():
@@ -56,14 +58,19 @@ if assortment_file and all(geo_uploads.values()):
             st.error(f"{geo} export is missing required columns.")
             st.stop()
 
-        geo_df = geo_df[[
-            "Partner barcode",
-            "Product ID"
-        ]].rename(columns={
+        # Keep only necessary columns
+        geo_df = geo_df[["Partner barcode", "Product ID"]].copy()
+
+        # Convert SKU to string and strip spaces
+        geo_df["Partner barcode"] = geo_df["Partner barcode"].astype(str).str.strip()
+
+        # Rename for merging
+        geo_df = geo_df.rename(columns={
             "Partner barcode": "SKU",
             "Product ID": f"{geo}_Product_ID"
         })
 
+        # Merge with result
         result_df = result_df.merge(
             geo_df,
             on="SKU",
@@ -80,7 +87,6 @@ if assortment_file and all(geo_uploads.values()):
     # DOWNLOAD RESULT
     # -----------------------------
     csv = result_df.to_csv(index=False).encode("utf-8")
-
     st.download_button(
         label="Download result as CSV",
         data=csv,
